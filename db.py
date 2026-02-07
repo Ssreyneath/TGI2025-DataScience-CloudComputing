@@ -111,6 +111,32 @@ class DataValidator:
         except ValueError:
             return False, "Quantity must be a number"
 
+    @staticmethod
+    def validate_ship_date(order_date, ship_date):
+        """
+        Validate that ship_date is after order_date
+        """
+        from datetime import datetime
+        
+        try:
+            # If ship_date is None, it's valid (order not shipped yet)
+            if ship_date is None:
+                return True, "Valid"
+            
+            # Convert strings to datetime if needed
+            if isinstance(order_date, str):
+                order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
+            if isinstance(ship_date, str):
+                ship_date = datetime.fromisoformat(ship_date.replace('Z', '+00:00'))
+            
+            # Check if ship_date is after order_date
+            if ship_date < order_date:
+                return False, "Ship date cannot be before order date"
+            
+            return True, "Valid"
+        except Exception as e:
+            return False, f"Invalid date format: {str(e)}"  
+
 # ============================================
 # CAMBODIA POSTAL CODE DATABASE
 # ============================================
@@ -463,20 +489,80 @@ class ECommerceDB:
           st.error(f"Error fetching product details: {e}")
           return None
 
+    
+    def update_order_status(self, order_id, new_status, ship_date=None):
+        """
+        Update order status and ship_date with validation
+        """
+        conn = get_db_connection()
+        if not conn:
+            return False, "Database connection failed"
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get current order details
+            cursor.execute("""
+                SELECT order_date, order_status 
+                FROM orders 
+                WHERE order_id = %s
+            """, (order_id,))
+            
+            result = cursor.fetchone()
+            if not result:
+                cursor.close()
+                conn.close()
+                return False, "Order not found"
+            
+            order_date, current_status = result
+            
+            # Validate ship_date if provided
+            if ship_date:
+                is_valid, message = self.validator.validate_ship_date(order_date, ship_date)
+                if not is_valid:
+                    cursor.close()
+                    conn.close()
+                    return False, message
+                
+                # Update both status and ship_date
+                query = """
+                    UPDATE orders 
+                    SET order_status = %s, ship_date = %s 
+                    WHERE order_id = %s
+                """
+                cursor.execute(query, (new_status, ship_date, order_id))
+            else:
+                # Update only status
+                query = """
+                    UPDATE orders 
+                    SET order_status = %s 
+                    WHERE order_id = %s
+                """
+                cursor.execute(query, (new_status, order_id))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True, f"Order #{order_id} updated to '{new_status}'"
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            return False, f"Error updating order: {str(e)}"
+
     def get_order_details(self, order_id):
-        """Retrieve order details with items"""
+        """Retrieve order details with items (updated to include ship_date)"""
         conn = get_db_connection()
         if not conn:
             return None
-
+        
         try:
             cursor = conn.cursor()
-
-            # Get order info
+            
+            # Get order info - UPDATED to include ship_date
             order_query = """
                 SELECT o.order_id, o.order_date, o.total_amount, o.order_status,
                        c.first_name, c.last_name, c.email,
-                       pm.method_name, ch.channel_name
+                       pm.method_name, ch.channel_name, o.ship_date
                 FROM orders o
                 JOIN customers c ON o.customer_id = c.customer_id
                 JOIN payment_methods pm ON o.payment_method_id = pm.payment_method_id
@@ -485,7 +571,7 @@ class ECommerceDB:
             """
             cursor.execute(order_query, (order_id,))
             order = cursor.fetchone()
-
+            
             # Get order items
             items_query = """
                 SELECT product_name, quantity, unit_price, subtotal
@@ -494,11 +580,37 @@ class ECommerceDB:
             """
             cursor.execute(items_query, (order_id,))
             items = cursor.fetchall()
-
+            
             cursor.close()
             conn.close()
-
+            
             return {'order': order, 'items': items}
         except Exception as e:
             st.error(f"Error fetching order details: {e}")
             return None
+    
+    def get_all_orders(self):
+        """Retrieve all orders with summary information"""
+        conn = get_db_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT o.order_id, o.order_date, o.ship_date, o.order_status, 
+                       o.total_amount, c.first_name, c.last_name,
+                       pm.method_name, ch.channel_name
+                FROM orders o
+                JOIN customers c ON o.customer_id = c.customer_id
+                JOIN payment_methods pm ON o.payment_method_id = pm.payment_method_id
+                JOIN channels ch ON o.channel_id = ch.channel_id
+                ORDER BY o.order_date DESC
+            """)
+            orders = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return orders
+        except Exception as e:
+            st.error(f"Error fetching orders: {e}")
+            return []

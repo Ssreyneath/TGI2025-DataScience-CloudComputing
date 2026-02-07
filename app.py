@@ -319,41 +319,149 @@ def view_customers_page():
                 st.write(f"**Phone:** {customer[4]}")
                 st.write(f"**City:** {customer[5]}")
 
+def manage_orders_page():
+    """Manage and update order status"""
+    st.header("📦 Manage Orders")
+    
+    # Get all orders
+    orders = db.get_all_orders()
+    
+    if not orders:
+        st.info("No orders found in the database.")
+        return
+    
+    st.write(f"Total Orders: {len(orders)}")
+    
+    # Display orders in a table format
+    for order in orders:
+        order_id = order[0]
+        order_date = order[1]
+        ship_date = order[2]
+        status = order[3]
+        total = order[4]
+        customer_name = f"{order[5]} {order[6]}"
+        payment = order[7]
+        channel = order[8]
+        
+        # Color code by status
+        if status == 'Delivered':
+            status_color = "🟢"
+        elif status == 'Shipped':
+            status_color = "🔵"
+        elif status == 'Processing':
+            status_color = "🟡"
+        elif status == 'Cancelled':
+            status_color = "🔴"
+        else:  # Pending
+            status_color = "⚪"
+        
+        with st.expander(f"{status_color} Order #{order_id} - {customer_name} - ${total:.2f} - {status}"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write(f"**Order Date:** {order_date}")
+                st.write(f"**Ship Date:** {ship_date if ship_date else 'Not shipped yet'}")
+                st.write(f"**Customer:** {customer_name}")
+            
+            with col2:
+                st.write(f"**Status:** {status}")
+                st.write(f"**Payment:** {payment}")
+                st.write(f"**Channel:** {channel}")
+            
+            st.markdown("---")
+            st.subheader("Update Order Status")
+            
+            # Status update form
+            with st.form(f"update_order_{order_id}"):
+                col_status, col_date = st.columns(2)
+                
+                with col_status:
+                    new_status = st.selectbox(
+                        "New Status",
+                        ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"],
+                        index=["Pending", "Processing", "Shipped", "Delivered", "Cancelled"].index(status),
+                        key=f"status_{order_id}"
+                    )
+                
+                with col_date:
+                    # Only show ship_date input if status is Shipped or Delivered
+                    if new_status in ["Shipped", "Delivered"]:
+                        import datetime
+                        
+                        # Default to current ship_date or today
+                        default_date = ship_date if ship_date else datetime.datetime.now()
+                        
+                        new_ship_date = st.date_input(
+                            "Ship Date",
+                            value=default_date,
+                            min_value=order_date.date() if hasattr(order_date, 'date') else order_date,
+                            key=f"ship_date_{order_id}",
+                            help="Ship date must be after order date"
+                        )
+                    else:
+                        new_ship_date = None
+                
+                submitted = st.form_submit_button("Update Order", type="primary")
+                
+                if submitted:
+                    # Convert date to datetime if needed
+                    if new_ship_date and new_status in ["Shipped", "Delivered"]:
+                        import datetime
+                        ship_datetime = datetime.datetime.combine(new_ship_date, datetime.time(12, 0))
+                    else:
+                        ship_datetime = None
+                    
+                    success, message = db.update_order_status(order_id, new_status, ship_datetime)
+                    
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
+
 def view_order_details_page():
-    """View order details"""
+    """View order details (UPDATED to show ship_date)"""
     st.header("📦 Order Details")
-
+    
     order_id = st.number_input("Enter Order ID", min_value=1, step=1)
-
+    
     if st.button("Search Order"):
         order_data = db.get_order_details(order_id)
-
+        
         if not order_data or not order_data['order']:
             st.error("❌ Order not found")
         else:
             order = order_data['order']
             items = order_data['items']
-
+            
             st.success(f"✅ Order #{order[0]} found")
-
-            col1, col2 = st.columns(2)
-
+            
+            col1, col2, col3 = st.columns(3)
+            
             with col1:
                 st.write(f"**Order Date:** {order[1]}")
                 st.write(f"**Customer:** {order[4]} {order[5]}")
                 st.write(f"**Email:** {order[6]}")
-
+            
             with col2:
                 st.write(f"**Status:** {order[3]}")
                 st.write(f"**Payment Method:** {order[7]}")
                 st.write(f"**Channel:** {order[8]}")
-
+            
+            with col3:
+                st.write(f"**Total Amount:** ${order[2]:.2f}")
+                # Display ship_date (index 9)
+                if order[9]:
+                    st.write(f"**Ship Date:** {order[9]}")
+                else:
+                    st.write(f"**Ship Date:** Not shipped yet")
+            
             st.markdown("---")
             st.subheader("Order Items")
-
+            
             for item in items:
                 st.write(f"• {item[0]} - Qty: {item[1]} × ${item[2]:.2f} = ${item[3]:.2f}")
-
+            
             st.markdown(f"### **Total: ${order[2]:.2f}**")
 
 def main():
@@ -362,13 +470,19 @@ def main():
 
     menu = st.sidebar.selectbox(
         "Navigation",
-        ["Add Customer", "Create Order", "View Customers", "View Order Details"]
+        ["Add Customer"
+          , "Create Order"
+          ,"Manage Orders"  # NEW
+          , "View Customers"
+          , "View Order Details"]
     )
 
     if menu == "Add Customer":
         add_customer_page()
     elif menu == "Create Order":
         create_order_page()
+    elif menu == "Manage Orders":
+        manage_orders_page()  # NEW
     elif menu == "View Customers":
         view_customers_page()
     elif menu == "View Order Details":
