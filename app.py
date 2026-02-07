@@ -1,52 +1,378 @@
-import re
-import pandas as pd
+# Complete E-Commerce Application
+from db import *
 import streamlit as st
-from db import init_db, insert_submission, fetch_latest
+import psycopg2
+from psycopg2 import sql
+import re
+from datetime import datetime
+import os
 
-st.set_page_config(page_title="Form → Postgres", page_icon="🧾", layout="centered")
 
-# Create table once per app start
-init_db()
+# ============================================
+# STREAMLIT USER INTERFACE
+# ============================================
 
-st.title("🧾 Form → Neon Postgres")
-st.caption("Submit the form. Data is saved to Postgres and shown below.")
+# Page configuration
+st.set_page_config(
+    page_title="E-Commerce Data Collection",
+    page_icon="🛒",
+    layout="wide"
+)
 
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Custom CSS
+st.markdown("""
+    <style>
+    .success-box {
+        padding: 10px;
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 5px;
+        color: #155724;
+    }
+    .error-box {
+        padding: 10px;
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 5px;
+        color: #721c24;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-with st.form("submission_form", clear_on_submit=True):
-    name = st.text_input("Name", placeholder="e.g., Sokchea")
-    email = st.text_input("Email", placeholder="e.g., sokchea@example.com")
-    category = st.selectbox("Category", ["event", "training", "other"])
-    message = st.text_area("Message / Notes", placeholder="Write something...")
-    submitted = st.form_submit_button("Save to Database")
+# Initialize database handler
+db = ECommerceDB()
 
-if submitted:
-    name_clean = name.strip()
-    email_clean = email.strip().lower()
+def add_customer_page():
+    """Customer registration form"""
+    st.header("📝 Add New Customer")
 
-    if not name_clean:
-        st.error("Name is required.")
-    elif not EMAIL_RE.match(email_clean):
-        st.error("Please enter a valid email.")
+    # Use st.form to prevent premature resets
+    with st.form("customer_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            first_name = st.text_input("First Name *", max_chars=50,
+                                       help="Enter first name in English or Khmer")
+            last_name = st.text_input("Last Name *", max_chars=50,
+                                      help="Enter last name in English or Khmer")
+            email = st.text_input("Email *", max_chars=100,
+                                  placeholder="example@email.com")
+            phone = st.text_input("Phone Number *",
+                                  placeholder="012 345 678 or +855 12 345 678",
+                                  max_chars=20,
+                                  help="Cambodian phone number format")
+
+        with col2:
+            address = st.text_area("Address *", max_chars=200,
+                                   help="Street address, building number, etc.")
+
+            # City dropdown - starts with first city in list
+            city_list = sorted(list(CAMBODIA_POSTAL_CODES.keys()))
+            city = st.selectbox("City/District *",
+                               options=city_list,
+                               index=0,  # Default to first city
+                               help="Select your city or district")
+
+            # Auto-fill postal code based on city
+            auto_postal_code = get_postal_code(city) if city else "120101"
+            postal_code = st.text_input("Postal Code *",
+                                       value=auto_postal_code,
+                                       max_chars=6,
+                                       help="Auto-filled based on selected city")
+
+        st.markdown("*Required fields")
+
+        # Form submit button
+        submitted = st.form_submit_button("Register Customer", type="primary")
+
+        if submitted:
+            # Trim all inputs
+            first_name = first_name.strip()
+            last_name = last_name.strip()
+            email = email.strip()
+            phone = phone.strip()
+            address = address.strip()
+            city = city.strip()
+            postal_code = postal_code.strip()
+
+            # Check if any field is empty
+            if not first_name:
+                st.error("❌ First Name is required")
+            elif not last_name:
+                st.error("❌ Last Name is required")
+            elif not email:
+                st.error("❌ Email is required")
+            elif not phone:
+                st.error("❌ Phone Number is required")
+            elif not address:
+                st.error("❌ Address is required")
+            elif not city:
+                st.error("❌ City is required")
+            elif not postal_code:
+                st.error("❌ Postal Code is required")
+            else:
+                # All fields filled, proceed with database insertion
+                success, message = db.add_customer(
+                    first_name, last_name, email, phone, address, city, postal_code
+                )
+
+                if success:
+                    st.success(f"✅ {message}")
+                    st.balloons()
+                else:
+                    st.error(f"❌ {message}")
+
+def create_order_page():
+    """Order creation form with category and product selection"""
+    st.header("🛍️ Create New Order")
+
+    # Get customers for dropdown
+    customers = db.get_customers()
+    if not customers:
+        st.warning("⚠️ No customers found. Please add a customer first.")
+        return
+
+    # Customer selection
+    customer_options = {f"{c[1]} {c[2]} ({c[3]})": c[0] for c in customers}
+    selected_customer = st.selectbox("Select Customer *", list(customer_options.keys()))
+    customer_id = customer_options[selected_customer]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Payment method selection
+        payment_methods = db.get_payment_methods()
+        payment_options = {pm[1]: pm[0] for pm in payment_methods}
+        selected_payment = st.selectbox("Payment Method *", list(payment_options.keys()))
+        payment_method_id = payment_options[selected_payment]
+
+    with col2:
+        # Channel selection
+        channels = db.get_channels()
+        channel_options = {f"{ch[1]} - {ch[2]}": ch[0] for ch in channels}
+        selected_channel = st.selectbox("Order Channel *", list(channel_options.keys()))
+        channel_id = channel_options[selected_channel]
+
+    shipping_address = st.text_area("Shipping Address *", max_chars=200)
+
+    # Order items section
+    st.subheader("📦 Add Products to Order")
+
+    # Initialize session state for items
+    if 'order_items' not in st.session_state:
+        st.session_state.order_items = []
+
+    # Category and Product Selection
+    col_cat, col_prod = st.columns(2)
+
+    with col_cat:
+        # Get categories
+        categories = db.get_product_categories()
+        if categories:
+            category_options = {f"{cat[1]} - {cat[2]}": cat[0] for cat in categories}
+            selected_category = st.selectbox(
+                "Select Category",
+                list(category_options.keys()),
+                key="category_select"
+            )
+            selected_category_id = category_options[selected_category]
+        else:
+            st.warning("No product categories found")
+            selected_category_id = None
+
+    with col_prod:
+        # Get products for selected category
+        if selected_category_id:
+            products = db.get_products_by_category(selected_category_id)
+            if products:
+                # Format: "Product Name - $Price (Stock: X)"
+                product_options = {
+                    f"{p[1]} - ${p[3]:.2f} (Stock: {p[4]})": {
+                        'id': p[0],
+                        'name': p[1],
+                        'price': float(p[3]),
+                        'stock': p[4]
+                    } for p in products
+                }
+                selected_product = st.selectbox(
+                    "Select Product",
+                    list(product_options.keys()),
+                    key="product_select"
+                )
+                product_info = product_options[selected_product]
+            else:
+                st.warning("No products in this category")
+                product_info = None
+        else:
+            product_info = None
+
+    # Quantity and Add button
+    if product_info:
+        col_qty, col_btn = st.columns([1, 1])
+
+        with col_qty:
+            max_qty = min(product_info['stock'], 1000)  # Limit to stock or 1000
+            quantity = st.number_input(
+                "Quantity",
+                min_value=1,
+                max_value=max_qty,
+                value=1,
+                key="qty",
+                help=f"Available stock: {product_info['stock']}"
+            )
+
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("➕ Add to Order", type="primary"):
+                if quantity > product_info['stock']:
+                    st.error(f"❌ Only {product_info['stock']} items available in stock")
+                else:
+                    # Check if product already in cart
+                    existing_item = None
+                    for idx, item in enumerate(st.session_state.order_items):
+                        if item['product_name'] == product_info['name']:
+                            existing_item = idx
+                            break
+
+                    if existing_item is not None:
+                        # Update quantity
+                        st.session_state.order_items[existing_item]['quantity'] += quantity
+                        st.success(f"✅ Updated {product_info['name']} quantity")
+                    else:
+                        # Add new item
+                        st.session_state.order_items.append({
+                            'product_name': product_info['name'],
+                            'quantity': quantity,
+                            'unit_price': product_info['price']
+                        })
+                        st.success(f"✅ Added {product_info['name']} to order")
+                    st.rerun()
+
+    # Display current cart
+    if st.session_state.order_items:
+        st.markdown("---")
+        st.subheader("🛒 Current Order Items")
+
+        total = 0
+        for idx, item in enumerate(st.session_state.order_items):
+            subtotal = item['quantity'] * item['unit_price']
+            total += subtotal
+
+            col_item, col_actions = st.columns([5, 1])
+
+            with col_item:
+                st.write(f"**{item['product_name']}**")
+                st.write(f"Qty: {item['quantity']} × ${item['unit_price']:.2f} = ${subtotal:.2f}")
+
+            with col_actions:
+                if st.button("🗑️", key=f"remove_{idx}", help="Remove item"):
+                    st.session_state.order_items.pop(idx)
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown(f"### **Total Amount: ${total:.2f}**")
+
+        # Place Order Button
+        col_clear, col_order = st.columns([1, 1])
+
+        with col_clear:
+            if st.button("🗑️ Clear All Items", type="secondary"):
+                st.session_state.order_items = []
+                st.rerun()
+
+        with col_order:
+            if st.button("✅ Place Order", type="primary"):
+                if not shipping_address:
+                    st.error("❌ Please enter shipping address")
+                elif len(st.session_state.order_items) == 0:
+                    st.error("❌ Please add at least one item")
+                else:
+                    success, message = db.create_order(
+                        customer_id, payment_method_id, channel_id,
+                        total, shipping_address, st.session_state.order_items
+                    )
+
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.session_state.order_items = []
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
     else:
-        new_id = insert_submission(
-            name=name_clean,
-            email=email_clean,
-            category=category,
-            message=message.strip()
-        )
-        st.success(f"✅ Saved to Postgres (id={new_id})")
+        st.info("ℹ️ No items in order yet. Select a category and product to add.")
 
-st.divider()
-st.subheader("📄 Latest Submissions")
+def view_customers_page():
+    """Display all customers"""
+    st.header("👥 Customer List")
 
-try:
-    rows = fetch_latest(50)
-    if rows:
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True)
+    customers = db.get_customers()
+
+    if not customers:
+        st.info("No customers found in the database.")
     else:
-        st.info("No records yet. Submit the form above.")
-except Exception as e:
-    st.error("Could not fetch rows from the database.")
-    st.code(str(e))
+        st.write(f"Total Customers: {len(customers)}")
+
+        for customer in customers:
+            with st.expander(f"Customer ID: {customer[0]} - {customer[1]} {customer[2]}"):
+                st.write(f"**Email:** {customer[3]}")
+                st.write(f"**Phone:** {customer[4]}")
+                st.write(f"**City:** {customer[5]}")
+
+def view_order_details_page():
+    """View order details"""
+    st.header("📦 Order Details")
+
+    order_id = st.number_input("Enter Order ID", min_value=1, step=1)
+
+    if st.button("Search Order"):
+        order_data = db.get_order_details(order_id)
+
+        if not order_data or not order_data['order']:
+            st.error("❌ Order not found")
+        else:
+            order = order_data['order']
+            items = order_data['items']
+
+            st.success(f"✅ Order #{order[0]} found")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write(f"**Order Date:** {order[1]}")
+                st.write(f"**Customer:** {order[4]} {order[5]}")
+                st.write(f"**Email:** {order[6]}")
+
+            with col2:
+                st.write(f"**Status:** {order[3]}")
+                st.write(f"**Payment Method:** {order[7]}")
+                st.write(f"**Channel:** {order[8]}")
+
+            st.markdown("---")
+            st.subheader("Order Items")
+
+            for item in items:
+                st.write(f"• {item[0]} - Qty: {item[1]} × ${item[2]:.2f} = ${item[3]:.2f}")
+
+            st.markdown(f"### **Total: ${order[2]:.2f}**")
+
+def main():
+    st.title("🛒 E-Commerce Application")
+    st.markdown("---")
+
+    menu = st.sidebar.selectbox(
+        "Navigation",
+        ["Add Customer", "Create Order", "View Customers", "View Order Details"]
+    )
+
+    if menu == "Add Customer":
+        add_customer_page()
+    elif menu == "Create Order":
+        create_order_page()
+    elif menu == "View Customers":
+        view_customers_page()
+    elif menu == "View Order Details":
+        view_order_details_page()
+
+if __name__ == "__main__":
+    main()
