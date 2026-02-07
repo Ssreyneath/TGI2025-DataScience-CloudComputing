@@ -1,6 +1,5 @@
 # Set environment variable from Colab secrets
 import os
-from google.colab import userdata
 import streamlit as st
 import psycopg2
 from psycopg2 import sql
