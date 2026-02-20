@@ -24,7 +24,7 @@ def get_db_connection():
 # ============================================
 class DataValidator:
     """Validation rules for all input fields"""
-
+    
     @staticmethod
     def validate_email(email):
         """Validate email format"""
@@ -32,50 +32,49 @@ class DataValidator:
         if not re.match(pattern, email):
             return False, "Invalid email format"
         return True, "Valid"
-
+    
     @staticmethod
     def validate_phone(phone):
         """
         Validate Cambodian phone number format
-        Accepted formats:
-        - 0XX XXX XXX (9-10 digits starting with 0)
-        - +855 XX XXX XXX (with country code)
-        - 855 XX XXX XXX (without + sign)
-
-        Common prefixes: 010, 011, 012, 015, 016, 017, 061, 069, 070, 071, 076, 077, 078, 079, 081, 085, 086, 087, 089, 090, 092, 093, 095, 096, 097, 098, 099
         """
         # Remove spaces, hyphens, and parentheses for validation
         cleaned_phone = re.sub(r'[\s\-()]', '', phone)
-
+        
         # Pattern 1: Starting with 0 (local format) - 9 or 10 digits
         pattern1 = r'^0(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
-
+        
         # Pattern 2: Starting with +855 (international format)
         pattern2 = r'^\+855(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
-
+        
         # Pattern 3: Starting with 855 (international without +)
         pattern3 = r'^855(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
-
+        
         if re.match(pattern1, cleaned_phone) or re.match(pattern2, cleaned_phone) or re.match(pattern3, cleaned_phone):
             return True, "Valid"
         else:
             return False, "Invalid Cambodian phone number. Format: 0XX XXX XXX or +855 XX XXX XXX"
-
+    
     @staticmethod
     def validate_name(name, field_name="Name"):
-        """Validate name fields"""
+        """Validate name fields - International friendly"""
         if not name or len(name.strip()) < 2:
             return False, f"{field_name} must be at least 2 characters"
         if len(name) > 50:
             return False, f"{field_name} cannot exceed 50 characters"
-        # Allow Khmer Unicode characters and Latin letters
-        if not re.match(r'^[\u1780-\u17FFa-zA-Z\s\-\']+$', name):
-            return False, f"{field_name} can only contain letters (Khmer or English), spaces, hyphens, and apostrophes"
+        
+        # Just check it's not only whitespace and doesn't contain numbers
+        cleaned_name = name.strip()
+        
+        # Disallow numbers and most special characters
+        if re.search(r'[0-9!@#$%^&*()_+=\[\]{};:"|<>,.?/\\]', cleaned_name):
+            return False, f"{field_name} cannot contain numbers or special characters"
+        
         return True, "Valid"
-
+    
     @staticmethod
     def validate_postal_code(postal_code):
-        """Validate postal code (relaxed for Cambodia)"""
+        """Validate postal code (Cambodia format)"""
         if not postal_code or len(postal_code.strip()) < 5:
             return False, "Postal code must be at least 5 characters"
         if len(postal_code) > 6:
