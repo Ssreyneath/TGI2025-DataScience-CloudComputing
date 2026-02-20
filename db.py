@@ -117,25 +117,25 @@ class DataValidator:
         Validate that ship_date is after order_date
         """
         from datetime import datetime
-        
+
         try:
             # If ship_date is None, it's valid (order not shipped yet)
             if ship_date is None:
                 return True, "Valid"
-            
+
             # Convert strings to datetime if needed
             if isinstance(order_date, str):
                 order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
             if isinstance(ship_date, str):
                 ship_date = datetime.fromisoformat(ship_date.replace('Z', '+00:00'))
-            
+
             # Check if ship_date is after order_date
             if ship_date < order_date:
                 return False, "Ship date cannot be before order date"
-            
+
             return True, "Valid"
         except Exception as e:
-            return False, f"Invalid date format: {str(e)}"  
+            return False, f"Invalid date format: {str(e)}"
 
 # ============================================
 # CAMBODIA POSTAL CODE DATABASE
@@ -489,7 +489,7 @@ class ECommerceDB:
           st.error(f"Error fetching product details: {e}")
           return None
 
-    
+
     def update_order_status(self, order_id, new_status, ship_date=None):
         """
         Update order status and ship_date with validation
@@ -497,25 +497,25 @@ class ECommerceDB:
         conn = get_db_connection()
         if not conn:
             return False, "Database connection failed"
-        
+
         try:
             cursor = conn.cursor()
-            
+
             # Get current order details
             cursor.execute("""
-                SELECT order_date, order_status 
-                FROM orders 
+                SELECT order_date, order_status
+                FROM orders
                 WHERE order_id = %s
             """, (order_id,))
-            
+
             result = cursor.fetchone()
             if not result:
                 cursor.close()
                 conn.close()
                 return False, "Order not found"
-            
+
             order_date, current_status = result
-            
+
             # Validate ship_date if provided
             if ship_date:
                 is_valid, message = self.validator.validate_ship_date(order_date, ship_date)
@@ -523,23 +523,23 @@ class ECommerceDB:
                     cursor.close()
                     conn.close()
                     return False, message
-                
+
                 # Update both status and ship_date
                 query = """
-                    UPDATE orders 
-                    SET order_status = %s, ship_date = %s 
+                    UPDATE orders
+                    SET order_status = %s, ship_date = %s
                     WHERE order_id = %s
                 """
                 cursor.execute(query, (new_status, ship_date, order_id))
             else:
                 # Update only status
                 query = """
-                    UPDATE orders 
-                    SET order_status = %s 
+                    UPDATE orders
+                    SET order_status = %s
                     WHERE order_id = %s
                 """
                 cursor.execute(query, (new_status, order_id))
-            
+
             conn.commit()
             cursor.close()
             conn.close()
@@ -554,10 +554,10 @@ class ECommerceDB:
         conn = get_db_connection()
         if not conn:
             return None
-        
+
         try:
             cursor = conn.cursor()
-            
+
             # Get order info - UPDATED to include ship_date
             order_query = """
                 SELECT o.order_id, o.order_date, o.total_amount, o.order_status,
@@ -571,7 +571,7 @@ class ECommerceDB:
             """
             cursor.execute(order_query, (order_id,))
             order = cursor.fetchone()
-            
+
             # Get order items
             items_query = """
                 SELECT product_name, quantity, unit_price, subtotal
@@ -580,25 +580,25 @@ class ECommerceDB:
             """
             cursor.execute(items_query, (order_id,))
             items = cursor.fetchall()
-            
+
             cursor.close()
             conn.close()
-            
+
             return {'order': order, 'items': items}
         except Exception as e:
             st.error(f"Error fetching order details: {e}")
             return None
-    
+
     def get_all_orders(self):
         """Retrieve all orders with summary information"""
         conn = get_db_connection()
         if not conn:
             return []
-        
+
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT o.order_id, o.order_date, o.ship_date, o.order_status, 
+                SELECT o.order_id, o.order_date, o.ship_date, o.order_status,
                        o.total_amount, c.first_name, c.last_name,
                        pm.method_name, ch.channel_name
                 FROM orders o
@@ -614,3 +614,164 @@ class ECommerceDB:
         except Exception as e:
             st.error(f"Error fetching orders: {e}")
             return []
+
+
+    # Add to ECommerceDB class in db.py
+
+    def get_revenue_by_day(self, limit=200):
+        """Get daily revenue from latest orders"""
+        conn = get_db_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    DATE(order_date) as date,
+                    SUM(total_amount) as revenue
+                FROM orders
+                ORDER BY order_date DESC
+                LIMIT %s
+            """, (limit,))
+            
+            # Group by date and sum
+            cursor.execute("""
+                SELECT 
+                    DATE(order_date) as date,
+                    SUM(total_amount) as revenue
+                FROM (
+                    SELECT order_date, total_amount
+                    FROM orders
+                    ORDER BY order_date DESC
+                    LIMIT %s
+                ) as latest_orders
+                GROUP BY DATE(order_date)
+                ORDER BY date
+            """, (limit,))
+            
+            data = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return data
+        except Exception as e:
+            st.error(f"Error fetching revenue data: {e}")
+            return []
+
+    def get_orders_by_day(self, limit=200):
+        """Get order count by day from latest orders"""
+        conn = get_db_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    DATE(order_date) as date,
+                    COUNT(*) as order_count
+                FROM (
+                    SELECT order_date
+                    FROM orders
+                    ORDER BY order_date DESC
+                    LIMIT %s
+                ) as latest_orders
+                GROUP BY DATE(order_date)
+                ORDER BY date
+            """, (limit,))
+            
+            data = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return data
+        except Exception as e:
+            st.error(f"Error fetching order count data: {e}")
+            return []
+
+    def get_latest_orders_table(self, limit=200):
+        """Get latest orders for table display"""
+        conn = get_db_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    o.order_id,
+                    c.customer_id,
+                    o.order_date,
+                    o.ship_date,
+                    o.order_status as status,
+                    pc.category_name as category,
+                    ch.channel_name as channel,
+                    o.total_amount,
+                    COALESCE(o.discount, 0) as discount,
+                    pm.method_name as payment
+                FROM orders o
+                JOIN customers c ON o.customer_id = c.customer_id
+                JOIN channels ch ON o.channel_id = ch.channel_id
+                JOIN payment_methods pm ON o.payment_method_id = pm.payment_method_id
+                LEFT JOIN order_items oi ON o.order_id = oi.order_id
+                LEFT JOIN products p ON oi.product_name = p.product_name
+                LEFT JOIN product_categories pc ON p.category_id = pc.category_id
+                ORDER BY o.order_date DESC
+                LIMIT %s
+            """, (limit,))
+            
+            orders = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return orders
+        except Exception as e:
+            st.error(f"Error fetching latest orders: {e}")
+            return []
+
+
+
+    def get_dashboard_stats(self):
+        """Get summary statistics for dashboard"""
+        conn = get_db_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Total revenue
+            cursor.execute("SELECT COALESCE(SUM(total_amount), 0) FROM orders")
+            total_revenue = cursor.fetchone()[0]
+            
+            # Total orders
+            cursor.execute("SELECT COUNT(*) FROM orders")
+            total_orders = cursor.fetchone()[0]
+            
+            # Total customers
+            cursor.execute("SELECT COUNT(*) FROM customers")
+            total_customers = cursor.fetchone()[0]
+            
+            # Average order value
+            cursor.execute("SELECT COALESCE(AVG(total_amount), 0) FROM orders")
+            avg_order_value = cursor.fetchone()[0]
+            
+            # Orders by status
+            cursor.execute("""
+                SELECT order_status, COUNT(*) 
+                FROM orders 
+                GROUP BY order_status
+            """)
+            orders_by_status = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'total_revenue': float(total_revenue),
+                'total_orders': total_orders,
+                'total_customers': total_customers,
+                'avg_order_value': float(avg_order_value),
+                'orders_by_status': orders_by_status
+            }
+        except Exception as e:
+            st.error(f"Error fetching dashboard stats: {e}")
+            return None

@@ -4,8 +4,11 @@ import streamlit as st
 import psycopg2
 from psycopg2 import sql
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
 
 
 # ============================================
@@ -322,16 +325,16 @@ def view_customers_page():
 def manage_orders_page():
     """Manage and update order status"""
     st.header("📦 Manage Orders")
-    
+
     # Get all orders
     orders = db.get_all_orders()
-    
+
     if not orders:
         st.info("No orders found in the database.")
         return
-    
+
     st.write(f"Total Orders: {len(orders)}")
-    
+
     # Display orders in a table format
     for order in orders:
         order_id = order[0]
@@ -342,7 +345,7 @@ def manage_orders_page():
         customer_name = f"{order[5]} {order[6]}"
         payment = order[7]
         channel = order[8]
-        
+
         # Color code by status
         if status == 'Delivered':
             status_color = "🟢"
@@ -354,27 +357,27 @@ def manage_orders_page():
             status_color = "🔴"
         else:  # Pending
             status_color = "⚪"
-        
+
         with st.expander(f"{status_color} Order #{order_id} - {customer_name} - ${total:.2f} - {status}"):
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.write(f"**Order Date:** {order_date}")
                 st.write(f"**Ship Date:** {ship_date if ship_date else 'Not shipped yet'}")
                 st.write(f"**Customer:** {customer_name}")
-            
+
             with col2:
                 st.write(f"**Status:** {status}")
                 st.write(f"**Payment:** {payment}")
                 st.write(f"**Channel:** {channel}")
-            
+
             st.markdown("---")
             st.subheader("Update Order Status")
-            
+
             # Status update form
             with st.form(f"update_order_{order_id}"):
                 col_status, col_date = st.columns(2)
-                
+
                 with col_status:
                     new_status = st.selectbox(
                         "New Status",
@@ -382,15 +385,15 @@ def manage_orders_page():
                         index=["Pending", "Processing", "Shipped", "Delivered", "Cancelled"].index(status),
                         key=f"status_{order_id}"
                     )
-                
+
                 with col_date:
                     # Only show ship_date input if status is Shipped or Delivered
                     if new_status in ["Shipped", "Delivered"]:
                         import datetime
-                        
+
                         # Default to current ship_date or today
                         default_date = ship_date if ship_date else datetime.datetime.now()
-                        
+
                         new_ship_date = st.date_input(
                             "Ship Date",
                             value=default_date,
@@ -400,9 +403,9 @@ def manage_orders_page():
                         )
                     else:
                         new_ship_date = None
-                
+
                 submitted = st.form_submit_button("Update Order", type="primary")
-                
+
                 if submitted:
                     # Convert date to datetime if needed
                     if new_ship_date and new_status in ["Shipped", "Delivered"]:
@@ -410,9 +413,9 @@ def manage_orders_page():
                         ship_datetime = datetime.datetime.combine(new_ship_date, datetime.time(12, 0))
                     else:
                         ship_datetime = None
-                    
+
                     success, message = db.update_order_status(order_id, new_status, ship_datetime)
-                    
+
                     if success:
                         st.success(f"✅ {message}")
                         st.rerun()
@@ -422,32 +425,32 @@ def manage_orders_page():
 def view_order_details_page():
     """View order details (UPDATED to show ship_date)"""
     st.header("📦 Order Details")
-    
+
     order_id = st.number_input("Enter Order ID", min_value=1, step=1)
-    
+
     if st.button("Search Order"):
         order_data = db.get_order_details(order_id)
-        
+
         if not order_data or not order_data['order']:
             st.error("❌ Order not found")
         else:
             order = order_data['order']
             items = order_data['items']
-            
+
             st.success(f"✅ Order #{order[0]} found")
-            
+
             col1, col2, col3 = st.columns(3)
-            
+
             with col1:
                 st.write(f"**Order Date:** {order[1]}")
                 st.write(f"**Customer:** {order[4]} {order[5]}")
                 st.write(f"**Email:** {order[6]}")
-            
+
             with col2:
                 st.write(f"**Status:** {order[3]}")
                 st.write(f"**Payment Method:** {order[7]}")
                 st.write(f"**Channel:** {order[8]}")
-            
+
             with col3:
                 st.write(f"**Total Amount:** ${order[2]:.2f}")
                 # Display ship_date (index 9)
@@ -455,14 +458,173 @@ def view_order_details_page():
                     st.write(f"**Ship Date:** {order[9]}")
                 else:
                     st.write(f"**Ship Date:** Not shipped yet")
-            
+
             st.markdown("---")
             st.subheader("Order Items")
-            
+
             for item in items:
                 st.write(f"• {item[0]} - Qty: {item[1]} × ${item[2]:.2f} = ${item[3]:.2f}")
-            
+
             st.markdown(f"### **Total: ${order[2]:.2f}**")
+
+
+def dashboard_page():
+    """Analytics Dashboard with charts and data table"""
+    st.header("📊 Latest Orders Dashboard")
+    
+    # Get dashboard statistics
+    stats = db.get_dashboard_stats()
+    
+    if stats:
+        # Display KPI metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Revenue", f"${stats['total_revenue']:,.2f}")
+        with col2:
+            st.metric("Total Orders", f"{stats['total_orders']:,}")
+        with col3:
+            st.metric("Total Customers", f"{stats['total_customers']:,}")
+        with col4:
+            st.metric("Avg Order Value", f"${stats['avg_order_value']:,.2f}")
+    
+    st.markdown("---")
+    
+    # Charts section
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        st.subheader("Revenue by day (from latest 200 orders)")
+        
+        # Get revenue data
+        revenue_data = db.get_revenue_by_day(limit=200)
+        
+        if revenue_data:
+            df_revenue = pd.DataFrame(revenue_data, columns=['date', 'revenue'])
+            
+            # Create line chart with plotly
+            fig_revenue = go.Figure()
+            fig_revenue.add_trace(go.Scatter(
+                x=df_revenue['date'],
+                y=df_revenue['revenue'],
+                mode='lines+markers',
+                name='Revenue',
+                line=dict(color='#1f77b4', width=2),
+                marker=dict(size=8),
+                hovertemplate='<b>Date:</b> %{x}<br><b>Revenue:</b> $%{y:.2f}<extra></extra>'
+            ))
+            
+            fig_revenue.update_layout(
+                xaxis_title="",
+                yaxis_title="",
+                hovermode='x unified',
+                showlegend=False,
+                height=400,
+                margin=dict(l=20, r=20, t=20, b=20),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+            )
+            
+            st.plotly_chart(fig_revenue, use_container_width=True)
+        else:
+            st.info("No revenue data available")
+    
+    with col_chart2:
+        st.subheader("Orders by day (from latest 200 orders)")
+        
+        # Get orders count data
+        orders_data = db.get_orders_by_day(limit=200)
+        
+        if orders_data:
+            df_orders = pd.DataFrame(orders_data, columns=['date', 'order_count'])
+            
+            # Create bar chart with plotly
+            fig_orders = go.Figure()
+            fig_orders.add_trace(go.Bar(
+                x=df_orders['date'],
+                y=df_orders['order_count'],
+                name='Orders',
+                marker_color='#1f77b4',
+                hovertemplate='<b>Date:</b> %{x}<br><b>Orders:</b> %{y}<extra></extra>'
+            ))
+            
+            fig_orders.update_layout(
+                xaxis_title="",
+                yaxis_title="",
+                hovermode='x unified',
+                showlegend=False,
+                height=400,
+                margin=dict(l=20, r=20, t=20, b=20),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)')
+            )
+            
+            st.plotly_chart(fig_orders, use_container_width=True)
+        else:
+            st.info("No order data available")
+    
+    st.markdown("---")
+    
+    # Data table section
+    st.subheader("Latest Orders Table")
+    
+    # Get latest orders
+    orders = db.get_latest_orders_table(limit=200)
+    
+    if orders:
+        # Create DataFrame
+        df = pd.DataFrame(orders, columns=[
+            'order_id', 'customer_id', 'order_date', 'ship_date', 
+            'status', 'category', 'channel', 'total_amount', 
+            'discount', 'payment'
+        ])
+        
+        # Format dates
+        df['order_date'] = pd.to_datetime(df['order_date']).dt.strftime('%Y-%m-%d')
+        df['ship_date'] = df['ship_date'].apply(
+            lambda x: pd.to_datetime(x).strftime('%Y-%m-%d') if pd.notna(x) else 'None'
+        )
+        
+        # Format amounts
+        df['total_amount'] = df['total_amount'].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "$0.00")
+        df['discount'] = df['discount'].apply(lambda x: f"${x:.2f}" if pd.notna(x) and x > 0 else "None")
+        
+        # Rename columns for display
+        df = df.rename(columns={
+            'order_id': 'Order ID',
+            'customer_id': 'Customer ID',
+            'order_date': 'Order Date',
+            'ship_date': 'Ship Date',
+            'status': 'Status',
+            'category': 'Category',
+            'channel': 'Channel',
+            'total_amount': 'Total Amount',
+            'discount': 'Discount',
+            'payment': 'Payment'
+        })
+        
+        # Display dataframe with custom styling
+        st.dataframe(
+            df,
+            use_container_width=True,
+            height=400,
+            hide_index=True
+        )
+        
+        # Download button
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download as CSV",
+            data=csv,
+            file_name=f"latest_orders_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No orders found in the database")
 
 def main():
     st.title("🛒 E-Commerce Application")
@@ -470,14 +632,17 @@ def main():
 
     menu = st.sidebar.selectbox(
         "Navigation",
-        ["Add Customer"
+        ["Dashboard", 
+         "Add Customer"
           , "Create Order"
           ,"Manage Orders"  # NEW
           , "View Customers"
           , "View Order Details"]
     )
 
-    if menu == "Add Customer":
+    if menu == "Dashboard":
+        dashboard_page()
+    elif menu == "Add Customer":
         add_customer_page()
     elif menu == "Create Order":
         create_order_page()
