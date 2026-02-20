@@ -631,6 +631,7 @@ class ECommerceDB:
                     DATE(order_date) as date,
                     SUM(total_amount) as revenue
                 FROM orders
+                GROUP BY order_date
                 ORDER BY order_date DESC
                 LIMIT %s
             """, (limit,))
