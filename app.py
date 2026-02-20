@@ -632,8 +632,8 @@ def main():
 
     menu = st.sidebar.selectbox(
         "Navigation",
-        ["Dashboard", 
-         "Add Customer"
+        ["Dashboard"
+         ,"Add Customer"
           , "Create Order"
           ,"Manage Orders"  # NEW
           , "View Customers"
