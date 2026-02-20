@@ -22,35 +22,6 @@ def get_db_connection():
 # ============================================
 # DATA VALIDATION CLASS
 # ============================================
-"""
-Database configuration and operations for E-Commerce Application
-"""
-
-import psycopg2
-from psycopg2 import sql
-import streamlit as st
-import re
-
-def get_db_connection():
-    """
-    Establish database connection using Streamlit secrets
-    """
-    try:
-        # Use Streamlit secrets for deployment
-        conn = psycopg2.connect(
-            host=st.secrets["database"]["host"],
-            database=st.secrets["database"]["database"],
-            user=st.secrets["database"]["user"],
-            password=st.secrets["database"]["password"],
-            port=st.secrets["database"]["port"],
-            sslmode=st.secrets["database"]["sslmode"]
-        )
-        return conn
-    except Exception as e:
-        st.error(f"Database connection error: {e}")
-        return None
-
-
 class DataValidator:
     """Validation rules for all input fields"""
     
