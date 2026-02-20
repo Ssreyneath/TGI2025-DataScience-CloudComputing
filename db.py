@@ -35,19 +35,11 @@ class DataValidator:
     
     @staticmethod
     def validate_phone(phone):
-        """
-        Validate Cambodian phone number format
-        """
-        # Remove spaces, hyphens, and parentheses for validation
+        """Validate Cambodian phone number format"""
         cleaned_phone = re.sub(r'[\s\-()]', '', phone)
         
-        # Pattern 1: Starting with 0 (local format) - 9 or 10 digits
         pattern1 = r'^0(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
-        
-        # Pattern 2: Starting with +855 (international format)
         pattern2 = r'^\+855(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
-        
-        # Pattern 3: Starting with 855 (international without +)
         pattern3 = r'^855(1[0-9]|6[1-9]|7[0-9]|8[1-9]|9[0-9])\d{6,7}$'
         
         if re.match(pattern1, cleaned_phone) or re.match(pattern2, cleaned_phone) or re.match(pattern3, cleaned_phone):
@@ -57,18 +49,17 @@ class DataValidator:
     
     @staticmethod
     def validate_name(name, field_name="Name"):
-        """Validate name fields - International friendly"""
+        """Validate name fields - Simple and reliable"""
         if not name or len(name.strip()) < 2:
             return False, f"{field_name} must be at least 2 characters"
         if len(name) > 50:
             return False, f"{field_name} cannot exceed 50 characters"
         
-        # Just check it's not only whitespace and doesn't contain numbers
         cleaned_name = name.strip()
         
-        # Disallow numbers and most special characters
-        if re.search(r'[0-9!@#$%^&*()_+=\[\]{};:"|<>,.?/\\]', cleaned_name):
-            return False, f"{field_name} cannot contain numbers or special characters"
+        # Only block numbers - allow all letters
+        if any(char.isdigit() for char in cleaned_name):
+            return False, f"{field_name} cannot contain numbers"
         
         return True, "Valid"
     
@@ -79,11 +70,15 @@ class DataValidator:
             return False, "Postal code must be at least 5 characters"
         if len(postal_code) > 6:
             return False, "Postal code cannot exceed 6 characters"
-        # Cambodia postal codes are 5-6 digits
-        if not re.match(r'^\d{5,6}$', postal_code.strip()):
+        
+        if not postal_code.strip().isdigit():
+            return False, "Postal code must contain only digits"
+        
+        if len(postal_code.strip()) not in [5, 6]:
             return False, "Postal code must be 5-6 digits"
+        
         return True, "Valid"
-
+    
     @staticmethod
     def validate_amount(amount):
         """Validate monetary amount"""
@@ -96,7 +91,7 @@ class DataValidator:
             return True, "Valid"
         except ValueError:
             return False, "Invalid amount format"
-
+    
     @staticmethod
     def validate_quantity(quantity):
         """Validate product quantity"""
